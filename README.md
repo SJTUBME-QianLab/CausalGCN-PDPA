@@ -37,6 +37,20 @@ python main.py --config ./train_causal_pre.yaml
 
 The results will be saved in `./result` folder.
 
+# description of input data structure
+
+Data loading: *FeederGraph* in `/tools/feeder.py`
+
+Shape of input data: `[B,P,d]`.  B: batch size, P: number of patches within a sample or number of nodes within a graph, d: length of node feature vector. 
+
+Input data acts as the node feature matrix, and patch coordinate information is needed additionally. 
+
+Adjacency matrix calculation: *ConstructGraph* in `/tools/construct_ graph_simple.py`
+
+Shape of output matrix:`[B,P,P]`, formed by stacking the adjacency matrices of all graphs along the first dimension.
+
+For the data from users, the adjacency matrix stack can be directly loaded in or be calculated through a customized function. Finally, the node feature matrix and the adjacency matrix stack are fed into the model.
+
 # Contact
 
 For any question, feel free to contact

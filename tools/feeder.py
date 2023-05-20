@@ -39,8 +39,8 @@ class Feeder(Dataset):
         return data_numpy, label, index
 
     def top_k(self, score, top_k):
-        rank = score.argsort()  # 每一行（样本）排序，最小0，最大n_class-1
-        hit_top_k = [l in rank[i, -top_k:] for i, l in enumerate(self.label)]  # 概率最大的类别=真实类别
+        rank = score.argsort()
+        hit_top_k = [l in rank[i, -top_k:] for i, l in enumerate(self.label)]
 
         return sum(hit_top_k) * 1.0 / len(hit_top_k)
 
@@ -57,7 +57,7 @@ class FeederGraph:
         self.debug = debug
         self.save = save
         self.data_file = os.path.join(self.out_dir, f'test_idx_{self.split_seed}', emb_name.split('_split')[0],
-                                      f'{emb_name}.npz')        # if os.path.isfile(self.data_file):
+                                      f'{emb_name}.npz')
         assert os.path.isfile(self.data_file)
         dd = np.load(self.data_file, allow_pickle=True)
         self.embedding = dd[f'{mode}_x']  # [N,P,d]
@@ -80,12 +80,6 @@ class FeederGraph:
             self.label = self.label[0:10]
             self.sample_name = self.sample_name[0:10]
 
-    # def __getattr__(self, name):
-    #     try:
-    #         return getattr(self.dataset, name)
-    #     except AttributeError as e:
-    #         raise AttributeError("Dataset object has no attribute '%s'" % name)
-
     def __len__(self):
         return len(self.label)
 
@@ -97,8 +91,8 @@ class FeederGraph:
         return data, edge, label, index
 
     def top_k(self, score, top_k):
-        rank = score.argsort()  # 每一行（样本）排序，最小0，最大n_class-1
-        hit_top_k = [l in rank[i, -top_k:] for i, l in enumerate(self.label)]  # 概率最大的类别=真实类别
+        rank = score.argsort()
+        hit_top_k = [l in rank[i, -top_k:] for i, l in enumerate(self.label)]
 
         return sum(hit_top_k) * 1.0 / len(hit_top_k)
 

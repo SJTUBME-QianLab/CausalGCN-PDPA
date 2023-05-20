@@ -34,7 +34,6 @@ class CausalScore(nn.Module):
 
     def get_score(self, x, edge):
         # for conv, bn in zip(self.convs1, self.batch_norms1):
-        #     # 一共两组
         #     x = conv(x, edge)  # GraphConv
         #     x = F.relu(bn(x))
         for conv in self.convs1[:-1]:
@@ -78,10 +77,9 @@ class PredictionNet(torch.nn.Module):
         graph_x = self.get_graph_rep(x, edge)
         return self.get_causal_pred(graph_x)
 
-    def get_graph_rep(self, x, edge):  # 流程图中的Shared Graph Encoder
+    def get_graph_rep(self, x, edge):
         xs = []
         for conv, bn in zip(self.convs2, self.batch_norms2):
-            # 一共两组
             x = conv(x, edge)
             x = F.relu(bn(x.transpose(1, 2)).transpose(1, 2))
             xs.append(x)

@@ -77,12 +77,12 @@ def get_parser():
     parser.add_argument('--L2', type=float, default=0)
 
     # optimizer
-    parser.add_argument('--base_lr', type=float, default=0.001, help='initial learning rate')  # 初始学习率
+    parser.add_argument('--base_lr', type=float, default=0.001, help='initial learning rate')
     parser.add_argument('--step', type=int, default=[], nargs='+',
-                        help='the epoch where optimizer reduce the learning rate')  # 优化器降低学习率的epoch
+                        help='the epoch where optimizer reduce the learning rate')
     parser.add_argument('--device', type=int, default=0, nargs='+', help='the indexes of GPUs for training or testing')
     parser.add_argument('--optimizer', default='SGD', help='type of optimizer')
-    parser.add_argument('--nesterov', type=str2bool, default=False, help='use nesterov or not')  # Momentum优化算法的一种改进
+    parser.add_argument('--nesterov', type=str2bool, default=False, help='use nesterov or not')
     parser.add_argument('--batch_size', type=int, default=50, help='training batch size')
     parser.add_argument('--test_batch_size', type=int, default=50, help='test batch size')
     parser.add_argument('--start_epoch', type=int, default=0, help='start training from which epoch')
@@ -140,9 +140,9 @@ class Processor:
         copytree(pwd, os.path.join(self.work_dir, 'code'), symlinks=False, ignore=ignore_patterns('__pycache__'), dirs_exist_ok=True)
         arg_dict = vars(self.arg)
         with open(os.path.join(self.work_dir, 'config.yaml'), 'w') as f:
-            yaml.dump(arg_dict, f)  # 在结果目录保存一份运行时的参数配置文件
+            yaml.dump(arg_dict, f)
 
-    def load_data(self):  # 加载数据
+    def load_data(self):
         self.print_log('Load data.')
         Feeder = import_class(self.arg.feeder)
         train_set = Feeder(emb_name=self.emb_name, fold=self.arg.fold, split_seed=self.arg.split_seed,
@@ -161,7 +161,7 @@ class Processor:
             dataset=test_set, batch_size=self.arg.test_batch_size, num_workers=self.arg.num_worker,
             shuffle=False, drop_last=False)
 
-    def load_model(self):  # 加载模型
+    def load_model(self):
         self.CELoss = nn.CrossEntropyLoss(reduction="mean")
         self.CElosses = nn.CrossEntropyLoss(reduction="none")
         network = import_class(self.arg.model)
@@ -190,9 +190,9 @@ class Processor:
         else:
             raise ValueError()
         self.lr_scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1, patience=10, verbose=True,
-                                              threshold=1e-4, threshold_mode='rel', cooldown=0)  # 动态学习率缩减
+                                              threshold=1e-4, threshold_mode='rel', cooldown=0)
         self.lr_scheduler_re = ReduceLROnPlateau(self.conf_opt, mode='min', factor=0.1, patience=10, verbose=True,
-                                                 threshold=1e-4, threshold_mode='rel', cooldown=0)  # 动态学习率缩减
+                                                 threshold=1e-4, threshold_mode='rel', cooldown=0)
 
     def start(self):
         # self.print_log('Parameters:\n{}\n'.format(str(vars(self.arg))))
@@ -241,10 +241,10 @@ class Processor:
 
             (causal_x, causal_edge), (conf_x, conf_edge), node_score \
                 = self.causal_assign(x_node, edge)
-            causal_rep = self.model.get_graph_rep(x=causal_x, edge=causal_edge)  # 图编码器
-            causal_out = self.model.get_causal_pred(causal_rep)  # 分类器
-            conf_rep = self.model.get_graph_rep(x=conf_x, edge=conf_edge).detach()  # 图编码器 不回传
-            conf_out = self.model.get_conf_pred(conf_rep)  # 另一个分类器
+            causal_rep = self.model.get_graph_rep(x=causal_x, edge=causal_edge)
+            causal_out = self.model.get_causal_pred(causal_rep)
+            conf_rep = self.model.get_graph_rep(x=conf_x, edge=conf_edge).detach()
+            conf_out = self.model.get_conf_pred(conf_rep)
 
             timer['model'] += self.split_time()
 
@@ -298,9 +298,6 @@ class Processor:
             self.train_writer.add_scalar(self.model_name + '/lr', self.lr, self.global_step)
             timer['statistics'] += self.split_time()
 
-        # accuracy = np.mean(np.array(true) == np.array(scores))
-        # self.val_writer.add_scalar(self.model_name + '/acc', accuracy, self.global_step)
-
         # statistics of time consumption and loss
         proportion = {
             k: '{:02d}%'.format(int(round(v * 100 / sum(timer.values()))))
@@ -337,10 +334,10 @@ class Processor:
 
                 (causal_x, causal_edge), (conf_x, conf_edge), node_score \
                     = self.causal_assign(x_node, edge)
-                causal_rep = self.model.get_graph_rep(x=causal_x, edge=causal_edge)  # 图编码器
-                causal_out = self.model.get_causal_pred(causal_rep)  # 分类器
-                conf_rep = self.model.get_graph_rep(x=conf_x, edge=conf_edge).detach()  # 图编码器 不回传
-                conf_out = self.model.get_conf_pred(conf_rep)  # 另一个分类器
+                causal_rep = self.model.get_graph_rep(x=causal_x, edge=causal_edge)
+                causal_out = self.model.get_causal_pred(causal_rep)
+                conf_rep = self.model.get_graph_rep(x=conf_x, edge=conf_edge).detach()
+                conf_out = self.model.get_conf_pred(conf_rep)
 
                 causal_loss = self.CELoss(causal_out, label)
                 loss_value.append(causal_loss.item())
