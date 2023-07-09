@@ -10,7 +10,7 @@ The authors' institution (Biomedical Image and Health Informatics Lab, School of
 
 # Author List
 
-Xinlu Tang, Xiaohua Qian\*
+Xinlu Tang, Rui Guo, Chencheng Zhang, Xiahai Zhuang\*, and Xiaohua Qian\*
 
 # Required
 
