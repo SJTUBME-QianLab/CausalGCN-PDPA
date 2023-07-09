@@ -1,0 +1,54 @@
+save_dir:
+data_dir:
+
+# data
+Y_name: posture.120.1_2_0n0
+patch_size: 11
+rate: 0.3
+#group: TryWrong
+split_seed: 2020
+seed: 2022
+
+# feeder
+feeder: tools.feeder.FeederGraph
+train_feeder_args:
+  debug: False
+  save: False
+test_feeder_args:
+  debug: False
+  save: False
+
+# build graph
+graph_args:
+  node_type: emb
+  edge_type: abscorr
+  dist_type: euc_gau
+#  sparse:
+#    level: global
+#    rate: 0.3
+#    thresh:
+  adj_norm: DAD
+
+# model
+emb_args:
+  feature_depth: [128, 128]
+  kernels: [3, 3]
+cnn_pre_epoch: 20
+model: net.conv_gcn_readout.ConvGCN
+model_args:
+  hidden2: [32, 32, 32]
+
+# training
+# device: [0,1,2,3]
+device: [0]
+batch_size: 8
+test_batch_size: 8
+
+#optim
+optimizer: SGD
+weight_decay: 0.0005
+base_lr: 0.001
+step: []
+num_epoch: 50
+nesterov: True
+

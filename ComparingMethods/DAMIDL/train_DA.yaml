@@ -1,0 +1,40 @@
+save_dir:
+data_dir:
+exp_name: DAMIDL
+split_seed: 2020
+# seed must be in the command
+
+# data
+Y_name: posture.120.1_2_0n0
+patch_size: 11
+rate: 0.3
+
+# feeder
+feeder: tools.feeder.Feeder
+train_feeder_args:
+  debug: False
+  save: False
+test_feeder_args:
+  debug: False
+  save: False
+
+
+# model
+model: net.DAMIDL.DAMIDL
+#model_args: default
+
+# training
+# device: [0,1,2,3]
+device: [0]
+batch_size: 1
+test_batch_size: 1
+
+#optim
+optimizer: SGD
+weight_decay: 0.0005
+base_lr: 0.0005
+step: []
+num_epoch: 50
+nesterov: True
+
+

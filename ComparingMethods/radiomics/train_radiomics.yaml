@@ -1,0 +1,11 @@
+save_dir:
+data_dir:
+radio_path: ./radiomics_features/radiomics_features_88.csv
+
+# data
+Y_name: posture.120.1_2_0n0
+patch_size: 11
+rate: 0.3
+
+seed: 2022
+split_seed: 2020

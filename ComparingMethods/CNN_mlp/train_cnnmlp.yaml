@@ -1,0 +1,40 @@
+save_dir:
+data_dir:
+
+# data
+Y_name: posture.120.1_2_0n0
+patch_size: 11
+rate: 0.3
+seed: 2020
+
+# feeder
+feeder: tools.feeder.Feeder
+train_feeder_args:
+  debug: False
+  save: False
+test_feeder_args:
+  debug: False
+  save: False
+
+# embedding
+emb: net.cnn_mlp.ConvEmbedding
+emb_args:
+  feature_depth: [128, 128]
+  kernels: [3, 3]
+  hidden2:
+  pool: cat
+cnn_pre_epoch: 20
+
+# training
+# device: [0,1,2,3]
+device: [0]
+batch_size: 8
+test_batch_size: 8
+
+#optim
+optimizer: SGD
+weight_decay: 0.0005
+base_lr: 0.001
+step: []
+nesterov: True
+

@@ -1,11 +1,3 @@
-# -*- coding: utf-8 -*-
-# @Time    : 2022/8/8 1:03
-# @Author  : tangxl
-# @FileName: settle_results.py
-# @Software: PyCharm
-"""
-"""
-
 import numpy as np
 import pandas as pd
 import os
@@ -13,15 +5,15 @@ import re
 import pickle
 import platform
 import nibabel as nib
-from tools.utils import eval_metric_cl2, get_auc_cl2, eval_metric, get_auc, get_CM, plot_confusion_matrix
+from tools.utils import eval_metric_cl2, get_auc_cl2, get_CM, plot_confusion_matrix
 import sklearn
 import seaborn as sns
 import itertools
 from itertools import cycle
 import matplotlib.pyplot as plt
-plt.rc('font', family='Times New Roman')  # 设置字体为Times New Roman
-plt.rcParams['savefig.dpi'] = 300 #图片像素
-plt.rcParams['figure.dpi'] = 300 #分辨率
+plt.rc('font', family='Times New Roman')
+plt.rcParams['savefig.dpi'] = 300
+plt.rcParams['figure.dpi'] = 300
 
 raw_dirs = {
     'windows': {
@@ -34,7 +26,6 @@ raw_dirs = {
         'template_path': '/home/data/tangxl/software-pack/spm12/toolbox/AAL3/AAL3v1_1mm.nii.gz',
         'related_nii_path': '/home/data/tangxl/PD_exp/QSM/aal3v1_roi/roi_index_all.nii.gz',
         'data_path': '/home/data/tangxl/PD_exp/QSM_voxel/',
-        # 'save_path': '/home/data/tangxl/PD_exp/QSM_results/1001_CNNpre_causal_ratio',
         'save_path': '/home/data/tangxl/PD_exp/QSM_results/1009_Ours_all',
     },
 }
@@ -43,164 +34,7 @@ metrics = ['acc', 'pre', 'sen', 'spe', 'f1', 'auc']
 ave = ''
 
 
-def main():
-    main_param()
-
-
-def main_param():  # 0820
-    # concat 5fold
-    data_name = 'posture.120.1_2_0n0_pw11_r0.3'
-    # data_name = 'posture.120.1_2_0n0_pw9_r0.4'
-    # data_name = 'posture.120.1_2_0n0_pw7_r0.5'
-
-    split_list = [int(kk.split('split')[1]) for kk in os.listdir(os.path.join(raw_dirs['save_path'], data_name))]
-    # split_list = [2018, 2020, 2022, 2025, 2027, 2028, 2031, 2032, 2039, 2049]
-    # split_list = [2027, 2031, 2032, 2039]
-    # split_list = list(range(2020, 2023))
-    # split_list = list(range(2038, 2040))
-    # split_list = [2020]
-
-    concat_split_seed(split_list, data_name)
-
-    # seed_list = [2022]
-    # concat_fold(split_list, seed_list, data_name)
-    # concat_all(list(range(2020, 2040)), data_name)
-    concat_all(split_list, data_name)
-
-    # rename(split_list, data_name)
-
-
-def rename(split_list, data_name):
-    dir_i = os.path.join(raw_dirs['save_path'], 'concat', data_name)
-    os.makedirs(dir_i, exist_ok=True)
-    for split in split_list:
-        seed_list = [int(kk.split('seed')[1]) for kk in
-                     os.listdir(os.path.join(raw_dirs['save_path'], data_name, f"split{split}"))]
-        for seed in seed_list:
-            for fold in range(5):
-                save_path = os.path.join(raw_dirs['save_path'], data_name, f'split{split}', f'seed{seed}', f'fold{fold}')
-                if not os.path.exists(save_path):
-                    continue
-                for para_name in sorted(os.listdir(save_path)):
-                    # if 'La0.000L10.000L20.000' in para_name:
-                    #     os.system(f'rm -r {os.path.join(save_path, para_name)}')
-                    dir_ii = os.path.join(save_path, para_name)
-                    new_name = dir_ii.replace('L1', '0L1').replace('L2', '0L2').replace('__raw', '0__raw')
-                    # print(dir_ii)
-                    os.rename(dir_ii, new_name)
-
-
-def concat_split_seed(split_list, data_name):
-    anchor = {2020: [0.72115, 0.17541, 0.19446],
-              2027: [0.72115, 0.14079, 0.14997],
-              2031: [0.72596, 0.13653, 0.13758],
-              2032: [0.72115, 0.10503, 0.11001],
-              2039: [0.72596, 0.10806, 0.11555]}
-    dir_i = os.path.join(raw_dirs['save_path'], 'concat', data_name)
-    os.makedirs(dir_i, exist_ok=True)
-    out_dir = os.path.join(dir_i, 'CM_5CV')
-    os.makedirs(out_dir, exist_ok=True)
-    data_dir = os.path.join(raw_dirs['data_path'], data_name.split('_pw')[0], data_name)
-    for split in split_list:
-        seed_list = [int(kk.split('seed')[1]) for kk in
-                     os.listdir(os.path.join(raw_dirs['save_path'], data_name, f"split{split}"))]
-        if os.path.isfile(os.path.join(dir_i, f'finalscores_5CV_para_split{split}.pkl')):
-            with open(os.path.join(dir_i, f'finalscores_5CV_para_split{split}.pkl'), 'rb') as f:
-                evals_dict = pickle.load(f)
-        else:
-            evals_dict = dict()
-        for seed in seed_list:
-            save_path = os.path.join(raw_dirs['save_path'], data_name, f'split{split}', f'seed{seed}')
-            if not os.path.exists(os.path.join(save_path, 'fold0')):
-                continue
-            for para_name in sorted(os.listdir(os.path.join(save_path, 'fold0'))):
-                para_name0 = '__'.join(para_name.split('__')[1:])
-                if f'{para_name0}_SEED{seed}' in evals_dict.keys():
-                    continue
-
-                scores_5CV = pd.DataFrame()
-                flag = 0
-                for fold in range(5):
-                    if not os.path.exists(os.path.join(save_path, f'fold{fold}')):
-                        break
-                    ff = [kk for kk in os.listdir(os.path.join(save_path, f'fold{fold}')) if para_name0 in kk]
-                    if len(ff) != 1:
-                        print(f'{save_path}, fold{fold}, {para_name0} not exist')
-                        break
-                    dir_ii = os.path.join(save_path, f'fold{fold}', ff[0])
-                    ss = SettleResults(data_dir, dir_ii)
-                    score_i = ss.get_final_score()
-                    if score_i is None:
-                        print('Not complete 5 fold')
-                        break
-                    scores_5CV = pd.concat([scores_5CV, score_i], axis=1)
-                    flag += 1
-                if flag < 5:
-                    continue
-
-                data_dir0 = '/home/data/tangxl/PD_exp/QSM/Y_posture.120.1_2_0n0_pw_5/Y_posture.120.1_2_0n0_pw_5_pnum_200'
-                with open(os.path.join(data_dir0, 'label.pkl'), 'rb') as f:
-                    label_all, sub_name_all = pickle.load(f)
-                label_df = pd.DataFrame({'label': label_all, 'sub_name': sub_name_all})
-                Fassign_5CV = catch_CausalScore(para_name=para_name0, save_path=raw_dirs['save_path'],
-                                                split=split, seed=seed, mode='test')
-                causal = label_df.merge(Fassign_5CV, on='sub_name', how='left')
-                causal0_std = np.std(causal[causal['label'] == 0].iloc[:, 2:].values, axis=0).mean()  # 负样本方差
-                causal1_std = np.std(causal[causal['label'] == 1].iloc[:, 2:].values, axis=0).mean()  # 正样本方差
-
-                auc, _, _ = get_auc_cl2(true=scores_5CV.iloc[-1, :], prob=scores_5CV.iloc[:-1, :])
-                evals = eval_metric_cl2(true=scores_5CV.iloc[-1, :], prob=scores_5CV.iloc[:-1, :])
-                cm = get_CM(scores_5CV.iloc[-1, :], scores_5CV.iloc[:-1, :])
-                print(split, seed, para_name0)
-                classes = ['0', 'n0'] if data_name.split('_')[2] == '0n0' else [str(kk) for kk in
-                                                                                data_name.split('_')[2]]
-                plot_confusion_matrix(data_name + '\n' + para_name0,
-                                      os.path.join(out_dir, f'{para_name0}_split{split}_seed{seed}.png'),
-                                      cm=cm, classes=classes)
-
-                evals_dict.update({f'{para_name0}_SEED{seed}': [evals[kk] for kk in metrics[:-1]] + [auc, causal0_std, causal1_std]})
-                # if evals['acc'] >= anchor[split][0] and causal0_std <= anchor[split][1] and causal1_std <= anchor[split][2]:
-                #     print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!', split, seed)
-
-        with open(os.path.join(dir_i, f'finalscores_5CV_para_split{split}.pkl'), 'wb') as f:
-            pickle.dump(evals_dict, f)
-        evals_df = []
-        for ii, vv in evals_dict.items():
-            evals_df.append([split, int(ii.split('SEED')[1]), ii.split('_SEED')[0]] + list(vv))
-        evals_df = pd.DataFrame(evals_df, columns=['split', 'seed', 'para_name'] +
-                                                  [kk if kk[:3] == 'acc' else f'{kk}' for kk in metrics] + ['ca0', 'ca1'])
-        evals_df.to_csv(os.path.join(dir_i, f'finalscores_5CV_para_split{split}.csv'), index=False)
-
-
-def concat_all(split_list, data_name):
-    dir_i = os.path.join(raw_dirs['save_path'], 'concat', data_name)
-    metrics_seeds = pd.DataFrame()
-    for split in split_list:
-        if not os.path.isfile(os.path.join(dir_i, f'finalscores_5CV_para_split{split}.csv')):
-            continue
-        df = pd.read_csv(os.path.join(dir_i, f'finalscores_5CV_para_split{split}.csv'))
-        metrics_seeds = pd.concat([metrics_seeds, df], axis=0)
-    metrics_seeds.to_csv(os.path.join(dir_i, 'search.csv'), index=False)
-
-    # anchor = {2020: [0.72115, 0.17541, 0.19446],
-    #           2027: [0.72115, 0.14079, 0.14997],
-    #           2031: [0.72596, 0.13653, 0.13758],
-    #           2032: [0.72115, 0.10503, 0.11001],
-    #           2039: [0.72596, 0.10806, 0.11555]}
-    # find = []
-    # for i in range(len(metrics_seeds)):
-    #     split, seed, acc, causal0_std, causal1_std = metrics_seeds.iloc[i, [0, 1, 3, 9, 10]]
-    #     if acc >= anchor[split][0] and causal0_std <= anchor[split][1] and causal1_std <= anchor[split][2]:
-    #         print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!', split, seed)
-    #         find.append(metrics_seeds.iloc[i, :])
-    # find = pd.DataFrame(find, columns=metrics_seeds.columns)
-    # find.to_csv(os.path.join(dir_i, 'find_CausalScore.csv'), index=False)
-
-
 def catch_CausalScore(para_name, save_path, split, seed, mode='test'):
-    # split, seed = 2018, 921
-    # para_name = 'G16.16.32.32.32_r0.90__all_ycloseinter_l2_dot_La0.0100L10.0500L20.1000__raw'
-    # save_path = r'D:\OneDrive - sjtu.edu.cn\PD_data\PD_exp\remote_data\QSM_results\1005_Ours_all'
     save_pathi = os.path.join(save_path, 'posture.120.1_2_0n0_pw11_r0.3', f'split{split}', f'seed{seed}')
     sub_names, Fassign_5CV = [], []
     for fold in range(5):
@@ -213,30 +47,12 @@ def catch_CausalScore(para_name, save_path, split, seed, mode='test'):
             Fassign = pickle.load(f)
         for sub, vv in Fassign.items():
             Fassign_5CV.append((vv - vv.min()) / (vv.max() - vv.min()))
-#             Fassign_5CV.append(vv)
             sub_names.append(sub)
-    #     Fassign_5CV.extend([[kk] + list(vv.T[0]) for kk, vv in Fassign.items()])
-    # Fassign_5CV = pd.DataFrame(Fassign_5CV)
     Fassign_5CV = pd.concat([pd.DataFrame({'sub_name': sub_names}), pd.DataFrame(np.hstack(Fassign_5CV)).T], axis=1)
     tt = Fassign_5CV.groupby('sub_name').mean()
     tt.insert(loc=0, column='sub_name', value=tt.index)
     tt.reset_index(drop=True, inplace=True)
     return tt
-
-
-def concat_seed(split_list, data_name, para_name):
-    dir_i = os.path.join(raw_dirs['save_path'], 'concat', data_name)
-    columns = ['split', 'seed'] + [kk if kk[:3] == 'acc' else f'{kk}' for kk in metrics]
-    metrics_seeds = pd.DataFrame()
-    for split in split_list:
-        if not os.path.isfile(os.path.join(dir_i, f'finalscores_5CV_para_split{split}.csv')):
-            continue
-        df = pd.read_csv(os.path.join(dir_i, f'finalscores_5CV_para_split{split}.csv'))
-        df = df[df['para_name'] == para_name]
-        if len(df) == 0:
-            continue
-        metrics_seeds = pd.concat([metrics_seeds, df], axis=0)
-    metrics_seeds.to_csv(os.path.join(dir_i, para_name+'.csv'), index=True)
 
 
 def concat_fold(split_list, seed_list, data_name):
@@ -292,32 +108,6 @@ def concat_fold(split_list, seed_list, data_name):
                                       cm=cm, classes=classes)
             evals_df = pd.DataFrame(evals_dict, index=[kk if kk[:3] == 'acc' else f'{kk}' for kk in metrics])
             evals_df.to_csv(os.path.join(dir_i, f'finalscores_5CV_para_split{split}_seed{seed}.csv'), index=True)
-
-
-def check():
-    seed = 1
-    # for data_name in os.listdir(raw_dirs['save_path']):
-    #     if data_name in ['concat']:
-    #         continue
-    for data_name in ['Y_posture.120.1_2_0n0_pw_5_r0.4']:
-        for fold in range(5):
-            save_path = os.path.join(raw_dirs['save_path'], data_name, f'seed{seed}', f'fold{fold}')
-            if not os.path.exists(save_path):
-                continue
-            for para_name in sorted(os.listdir(save_path)):
-                dir_ii = os.path.join(save_path, para_name)
-                if os.path.isfile(os.path.join(dir_ii, 'CM.png')):
-                    continue
-                # print('not exist: \t', dir_ii)
-                data_dir = os.path.join(raw_dirs['data_path'], data_name.split('_pw')[0], data_name)
-                ss = SettleResults(data_dir, dir_ii, para_name)
-                # ss.concat_epoch_scores(epoch=100, att=False)
-                if ss.concat_trend_scores(num_epoch=30, metrics=metrics, phase='test', ave=ave):
-                    # os.system('rm -R %s' % os.path.join(save_path, para_name))
-                    print('not complete ...... removed %s' % dir_ii)
-                    continue
-                ss.merge_pkl(num_epoch=30, type_list=['test_score', 'train_eval_score'])
-                ss.confusion_matrix(out_path=os.path.join(dir_ii, 'CM.png'))
 
 
 class SettleResults:
@@ -386,8 +176,6 @@ class SettleResults:
             for epo in range(1+start_epoch, 1+num_epoch):
                 with open(os.path.join(self.exp_dir, 'epoch', 'epoch%d_%s_score.pkl' % (epo, phase)), 'rb') as f:
                     score_pred = pickle.load(f)
-                # with open(os.path.join(self.exp_dir, 'epoch', 'epoch%d_%s_score.pkl' % (epo, phase)), 'rb') as f:
-                #     score_pred.update(pickle.load(f))
                 score_pred_df = pd.DataFrame(score_pred)
                 scores = pd.concat([score_pred_df, label_df], axis=0).dropna(axis=1)
                 if self.num_class == 2:
@@ -487,19 +275,18 @@ class SettleResults:
         xx = score_att.iloc[(self.num_class + 1):, :].values
         print('all att score range: ', xx.min(), xx.max())
         plt.imshow(xx, aspect='auto', vmin=vmin, vmax=vmax)
-        ax.set_yticks(np.arange(len(self.slc_roi)))  # 设置y轴间隔
-        ax.set_yticklabels(self.slc_roi)  # 设置y轴标签
+        ax.set_yticks(np.arange(len(self.slc_roi)))
+        ax.set_yticklabels(self.slc_roi)
         plt.colorbar(ticks=list(bar_ticks))
         plt.savefig(os.path.join(self.exp_dir, "all_sample_att_heatmap.png"), dpi=100, bbox_inches='tight')
         plt.show()
 
-        # 截取子图
         fig, ax = plt.subplots(figsize=(fig_size2[0], fig_size2[1]))
         xx = score_att.iloc[self.roi_cut + 3, :].values
         print('ROI att score range: ', xx.min(), xx.max())
         plt.imshow(xx, aspect='auto', vmin=vmin, vmax=vmax)
-        ax.set_yticks(np.arange(len(self.roi_cut)))  # 设置y轴间隔
-        ax.set_yticklabels(np.array(self.slc_roi)[self.roi_cut])  # 设置y轴标签
+        ax.set_yticks(np.arange(len(self.roi_cut)))
+        ax.set_yticklabels(np.array(self.slc_roi)[self.roi_cut])
         plt.colorbar(ticks=list(bar_ticks))
         plt.savefig(os.path.join(self.exp_dir, "all_sample_att_heatmap_cut.png"), dpi=100, bbox_inches='tight')
         plt.show()

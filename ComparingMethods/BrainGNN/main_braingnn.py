@@ -11,17 +11,18 @@ from collections import OrderedDict
 from tensorboardX import SummaryWriter
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.autograd import Variable
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
 from torch.utils.data import DataLoader
 
-from tools.losses_define import *
 from tools.utils import seed_torch, str2bool, str2list, get_graph_name, get_emb_name, import_class
 from settle_results import SettleResults
 TF_ENABLE_ONEDNN_OPTS = 0
-torch.use_deterministic_algorithms(True)
-os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+# torch.use_deterministic_algorithms(True)
+# os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+from net.braingnn import Network
 
 
 def get_parser():
@@ -30,7 +31,7 @@ def get_parser():
     parser.add_argument('--exp_name', default='')
     parser.add_argument('--save_dir', default='./results', help='the work folder for storing results')
     parser.add_argument('--data_dir', default='./')
-    parser.add_argument('--config', default='./train_causal_pre.yaml', help='path to the configuration file')
+    parser.add_argument('--config', default='./train_braingnn.yaml', help='path to the configuration file')
     parser.add_argument('--seed', default=1, type=int, help='seed for random')
     parser.add_argument('--split_seed', default=1, type=int)
     parser.add_argument('--fold', default=0, type=int, help='0-4, fold idx for cross-validation')
@@ -39,6 +40,7 @@ def get_parser():
     parser.add_argument('--rate', default=0.5, type=float)
 
     # processor
+    # parser.add_argument('--phase', default='train', help='must be train or test')
     parser.add_argument('--save_score', type=str2bool, default=True,
                         help='if ture, the classification score will be stored')
 
@@ -56,37 +58,44 @@ def get_parser():
     parser.add_argument('--test_feeder_args', default=dict(), help='the arguments of data loader for test')
 
     # model
-    parser.add_argument('--graph_args', default=dict(), help='the arguments of model')
-    parser.add_argument('--model', default=None, help='the model will be used')
-    parser.add_argument('--model_args', default=dict(), help='the arguments of model')
+    parser.add_argument('--graph_args', default=dict(), help='the arguments of model')  # type=dict,
+    # parser.add_argument('--model', default=None, help='the model will be used')
+    # parser.add_argument('--model_args', default=dict(), help='the arguments of model')  # type=dict,
     parser.add_argument('--weights', default=None, help='the weights for network initialization')
     parser.add_argument('--ignore_weights', type=str, default=[], nargs='+',
                         help='the name of weights which will be ignored in the initialization')
 
     # CNN embedding
     # parser.add_argument('--emb', default=None, help='the model will be used')
-    parser.add_argument('--emb_args', default=dict(), help='the arguments of model')
+    parser.add_argument('--emb_args', default=dict(), help='the arguments of model')  # type=dict,
     parser.add_argument('--cnn_pre_epoch', type=int, default=20)
     # parser.add_argument('--cnn_weights', default=None, help='the weights for CNN network initialization')
 
-    # hyper-parameters
-    parser.add_argument('--loss_kind', type=str, default='own_yclose_l1_l1')
-    parser.add_argument('--Laux', type=float, default=0)
-    parser.add_argument('--L1', type=float, default=0)
-    parser.add_argument('--L2', type=float, default=0)
-
     # optimizer
-    parser.add_argument('--base_lr', type=float, default=0.001, help='initial learning rate')
+    parser.add_argument('--base_lr', type=float, default=0.001, help='initial learning rate')  # 初始学习率
     parser.add_argument('--step', type=int, default=[], nargs='+',
-                        help='the epoch where optimizer reduce the learning rate')
+                        help='the epoch where optimizer reduce the learning rate')  # 优化器降低学习率的epoch
     parser.add_argument('--device', type=int, default=0, nargs='+', help='the indexes of GPUs for training or testing')
     parser.add_argument('--optimizer', default='SGD', help='type of optimizer')
-    parser.add_argument('--nesterov', type=str2bool, default=False, help='use nesterov or not')
+    parser.add_argument('--nesterov', type=str2bool, default=False, help='use nesterov or not')  # Momentum优化算法的一种改进
     parser.add_argument('--batch_size', type=int, default=50, help='training batch size')
     parser.add_argument('--test_batch_size', type=int, default=50, help='test batch size')
     parser.add_argument('--start_epoch', type=int, default=0, help='start training from which epoch')
     parser.add_argument('--num_epoch', type=int, default=80, help='stop training in which epoch')
     parser.add_argument('--weight_decay', type=float, default=0.0005, help='weight decay for optimizer')
+
+    parser.add_argument('--stepsize', type=int, default=20, help='scheduler step size')
+    parser.add_argument('--gamma', type=float, default=0.5, help='scheduler shrinking rate')
+    parser.add_argument('--lamb0', type=float, default=1, help='classification loss weight')
+    parser.add_argument('--lamb1', type=float, default=0.1, help='s1 unit regularization')
+    parser.add_argument('--lamb2', type=float, default=0.1, help='s2 unit regularization')
+    parser.add_argument('--lamb3', type=float, default=0.1, help='s1 entropy regularization')
+    parser.add_argument('--lamb4', type=float, default=0.1, help='s2 entropy regularization')
+    parser.add_argument('--lamb5', type=float, default=0.1, help='s1 consistence regularization')
+    parser.add_argument('--layer', type=int, default=2, help='number of GNN layers')
+    parser.add_argument('--ratio', type=float, default=0.5, help='pooling ratio')
+    # parser.add_argument('--indim', type=int, default=200, help='feature dim')
+    # parser.add_argument('--nroi', type=int, default=200, help='num of ROIs')
     return parser
 
 
@@ -109,7 +118,6 @@ class Processor:
 
         self.arg.emb_args = str2list(self.arg.emb_args, flag='deep')
         self.arg.graph_args = str2list(self.arg.graph_args, flag='simple')
-        self.arg.model_args = str2list(self.arg.model_args, flag='deep')
 
         self.data_name = '{s[0]}_pw{s[1]}_r{s[2]}'.format(
             s=[str(vars(self.arg)[kk]) for kk in ['Y_name', 'patch_size', 'rate']])
@@ -117,14 +125,10 @@ class Processor:
         self.emb_name = get_emb_name(epoch=self.arg.cnn_pre_epoch, seed=self.arg.split_seed, fold=self.arg.fold,
                                      **self.arg.emb_args)
         self.graph_name = get_graph_name(**self.arg.graph_args)
-        netw = 'G{}_r{:.2f}'.format(
-            '.'.join([str(s) for s in self.arg.model_args['hidden1'] + self.arg.model_args['hidden2']]),
-            self.arg.model_args['ratio']
+        netw = 'cls{:.2f}_uni{:.2f}_ent{:.2f}_cons{:.2f}_r{}'.format(
+            self.arg.lamb0, self.arg.lamb1, self.arg.lamb3, self.arg.lamb5, self.arg.ratio
         )
-        loss_name = '{}_La{:.4f}L1{:.4f}L2{:.4f}'.format(
-            self.arg.loss_kind, self.arg.Laux, self.arg.L1, self.arg.L2
-        )
-        self.arg.exp_name = '__'.join([netw, loss_name, self.arg.exp_name])
+        self.arg.exp_name = '__'.join([netw, self.arg.exp_name])
 
         self.model_name = 't{}__{}'.format(time.strftime('%Y%m%d%H%M%S'), self.arg.exp_name)
         self.work_dir = os.path.join(self.arg.save_dir, self.data_name, f'split{self.arg.split_seed}',
@@ -132,7 +136,7 @@ class Processor:
         os.makedirs(self.work_dir, exist_ok=True)
         os.makedirs(os.path.join(self.work_dir, 'epoch'), exist_ok=True)  # save pt, pkl
         self.output_device = self.arg.device[0] if type(self.arg.device) is list else self.arg.device
-        self.print_log(',\t'.join([self.emb_name, self.graph_name, netw, loss_name, self.arg.exp_name]))
+        self.print_log(',\t'.join([self.emb_name, self.graph_name, netw, self.arg.exp_name]))
 
         # copy all files
         pwd = os.path.dirname(os.path.realpath(__file__))
@@ -140,6 +144,8 @@ class Processor:
         arg_dict = vars(self.arg)
         with open(os.path.join(self.work_dir, 'config.yaml'), 'w') as f:
             yaml.dump(arg_dict, f)
+
+        self.EPS = 1e-10
 
     def load_data(self):
         self.print_log('Load data.')
@@ -161,41 +167,30 @@ class Processor:
             shuffle=False, drop_last=False)
 
     def load_model(self):
-        self.CELoss = nn.CrossEntropyLoss(reduction="mean")
-        self.CElosses = nn.CrossEntropyLoss(reduction="none")
-        network = import_class(self.arg.model)
-        self.causal_assign = network.CausalScore(
-            dim=self.data_loader['train'].dataset.dim,
-            hidden1=self.arg.model_args['hidden1'],
-            ratio=self.arg.model_args['ratio'], norm=self.arg.graph_args['adj_norm']
+        # self.CELoss = nn.CrossEntropyLoss(reduction="mean")
+        # self.CElosses = nn.CrossEntropyLoss(reduction="none")
+        self.model = Network(
+            indim=self.data_loader['test'].dataset.dim,
+            R=self.data_loader['test'].dataset.P,
+            ratio=self.arg.ratio, nclass=self.num_class,
         ).cuda(self.output_device)
-        self.model = network.PredictionNet(
-            in_features=self.arg.model_args['hidden1'][-1], num_class=self.num_class,
-            hidden2=self.arg.model_args['hidden2']).cuda(self.output_device)
 
     def load_optimizer(self):
         if self.arg.optimizer == 'SGD':
-            self.optimizer = optim.SGD(list(self.model.parameters()) + list(self.causal_assign.parameters()),
+            self.optimizer = optim.SGD(self.model.parameters(),
                                        lr=self.arg.base_lr, weight_decay=self.arg.weight_decay,
                                        momentum=0.9, nesterov=self.arg.nesterov)
-            self.conf_opt = optim.SGD(self.model.conf_mlp.parameters(),
-                                      lr=self.arg.base_lr, weight_decay=self.arg.weight_decay,
-                                      momentum=0.9, nesterov=self.arg.nesterov)
         elif self.arg.optimizer == 'Adam':
-            self.optimizer = optim.Adam(list(self.model.parameters()) + list(self.causal_assign.parameters()),
+            self.optimizer = optim.Adam(self.model.parameters(),
                                         lr=self.arg.base_lr, weight_decay=self.arg.weight_decay)
-            self.conf_opt = optim.Adam(self.model.conf_mlp.parameters(),
-                                       lr=self.arg.base_lr, weight_decay=self.arg.weight_decay)
         else:
             raise ValueError()
-        self.lr_scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1, patience=10, verbose=True,
-                                              threshold=1e-4, threshold_mode='rel', cooldown=0)
-        self.lr_scheduler_re = ReduceLROnPlateau(self.conf_opt, mode='min', factor=0.1, patience=10, verbose=True,
-                                                 threshold=1e-4, threshold_mode='rel', cooldown=0)
+        self.lr_scheduler = StepLR(self.optimizer, step_size=self.arg.stepsize, gamma=self.arg.gamma)
 
     def start(self):
         # self.print_log('Parameters:\n{}\n'.format(str(vars(self.arg))))
-        # self.global_step = self.arg.start_epoch * len(self.data_loader['train']) / self.arg.batch_size
+        self.global_step = self.arg.start_epoch * len(self.data_loader['train']) / self.arg.batch_size
+
         for epoch in range(self.arg.start_epoch, self.arg.num_epoch):
             # save_model = ((epoch + 1) % self.arg.save_interval == 0) or (epoch + 1 == self.arg.num_epoch)
             save_model = False
@@ -218,6 +213,9 @@ class Processor:
 
     def train(self, epoch, save_model=False):
         self.print_log('Training epoch: {}'.format(epoch + 1))
+        for param_group in self.optimizer.param_groups:
+            self.print_log(f"LR, {param_group['lr']}")
+
         loader = self.data_loader['train']
         self.train_writer.add_scalar(self.model_name + '/epoch', epoch, self.global_step)
         self.record_time()
@@ -231,71 +229,62 @@ class Processor:
 
         loss_value = []
         scores, true = [], []
+        s1_list = []  # L_TPK
+        s2_list = []  # L_GLC
         for batch_idx, (data, edges, label, index) in enumerate(process):
             self.global_step += 1
-            aux_loss, stable_loss, consist_loss, patch_loss = 0, 0, 0, 0
-            x_node, edge, label = self.converse2tensor(data, edges, label)
+            x_node, edge_index, edge_attr, batch, pos, label = self.converse2tensor(data, edges, label)
             timer['dataloader'] += self.split_time()
 
-            (causal_x, causal_edge), (conf_x, conf_edge), node_score \
-                = self.causal_assign(x_node, edge)
-            causal_rep = self.model.get_graph_rep(x=causal_x, edge=causal_edge)
-            causal_out = self.model.get_causal_pred(causal_rep)
-            conf_rep = self.model.get_graph_rep(x=conf_x, edge=conf_edge).detach()
-            conf_out = self.model.get_conf_pred(conf_rep)
-
+            output, w1, w2, s1, s2 = self.model(x_node, edge_index, batch.view(-1), edge_attr, pos)
             timer['model'] += self.split_time()
 
-            causal_loss = self.CELoss(causal_out, label)  # mean_j{L(y_j^c, y_j)}
-            conf_loss = self.CELoss(conf_out, label)
+            s1_list.append(s1.view(-1).detach().cpu().numpy())
+            s2_list.append(s2.view(-1).detach().cpu().numpy())
+            loss_c = F.nll_loss(output, label)
 
-            clf_loss, inv_loss, inv_type, con_loss = self.arg.loss_kind.split('_')
+            loss_p1 = (torch.norm(w1, p=2) - 1) ** 2  # L_unit, Eq.7
+            loss_p2 = (torch.norm(w2, p=2) - 1) ** 2
+            loss_tpk1 = self.topk_loss(s1, self.arg.ratio)  # Eq.9
+            loss_tpk2 = self.topk_loss(s2, self.arg.ratio)
+            loss_consist = 0
+            for c in range(self.num_class):
+                loss_consist += self.consist_loss(s1[label == c])  # Eq.8
+            loss = self.arg.lamb0 * loss_c + self.arg.lamb1 * loss_p1 + self.arg.lamb2 * loss_p2 \
+                   + self.arg.lamb3 * loss_tpk1 + self.arg.lamb4 * loss_tpk2 + self.arg.lamb5 * loss_consist
+            self.train_writer.add_scalar(self.model_name + '/classification_loss', loss_c, self.global_step)
+            self.train_writer.add_scalar(self.model_name + '/unit_loss1', loss_p1, self.global_step)
+            self.train_writer.add_scalar(self.model_name + '/unit_loss2', loss_p2, self.global_step)
+            self.train_writer.add_scalar(self.model_name + '/TopK_loss1', loss_tpk1, self.global_step)
+            self.train_writer.add_scalar(self.model_name + '/TopK_loss2', loss_tpk2, self.global_step)
+            self.train_writer.add_scalar(self.model_name + '/GCL_loss', loss_consist, self.global_step)
+            self.train_writer.add_scalar(self.model_name + '/loss', loss.item(), self.global_step)
 
-            # causal prediction
-            if self.arg.Laux > 0:
-                aux_loss += custom_clf(label=label, model=self.model,
-                                       rep_causal=causal_rep, rep_related=conf_rep, clf_loss=clf_loss)
-                self.train_writer.add_scalar(self.model_name + '/loss_aux', aux_loss.item(), self.global_step)
-
-            # causal stability
-            if self.arg.L1 > 0:
-                stable_loss += custom_stable(label=label, model=self.model,
-                                             rep_causal=causal_rep, rep_related=conf_rep,
-                                             inv_loss=inv_loss, inv_type=inv_type)
-                self.train_writer.add_scalar(self.model_name + '/loss_stable', stable_loss.item(), self.global_step)
-
-            # homogeneity
-            if self.arg.L2 > 0:
-                for c in range(self.num_class):
-                    consist_loss += custom_consist(node_score[label == c], dist_type=con_loss)
-                self.train_writer.add_scalar(self.model_name + '/loss_consist', consist_loss.item(), self.global_step)
-
-            loss_sum = causal_loss + self.arg.Laux * aux_loss + self.arg.L1 * stable_loss + self.arg.L2 * consist_loss \
-
-            self.conf_opt.zero_grad()
-            conf_loss.backward()
-            self.conf_opt.step()
-
+            # backward
             self.optimizer.zero_grad()
-            loss_sum.backward()
+            loss.backward()
             self.optimizer.step()
-            loss_value.append(causal_loss.item())
+            self.lr_scheduler.step()
+            # loss_all += loss.item() * len(data)
+            loss_value.append(loss.item())
 
             true.extend(self.data_loader['train'].dataset.label[index])
-            scores.extend(np.argmax(causal_out.data.cpu().numpy(), axis=1))
+            scores.extend(np.argmax(output.data.cpu().numpy(), axis=1))
 
-            value, predict_label = torch.max(causal_out.data, 1)
+            value, predict_label = torch.max(output.data, 1)
             acc = torch.mean((predict_label == label.data).float())
             self.train_writer.add_scalar(self.model_name + '/acc', acc, self.global_step)
-            self.train_writer.add_scalar(self.model_name + '/loss_all', loss_sum.item(), self.global_step)
-            self.train_writer.add_scalar(self.model_name + '/loss_causal', causal_loss.item(), self.global_step)
-            self.train_writer.add_scalar(self.model_name + '/loss_conf', conf_loss.item(), self.global_step)
 
             # statistics
             self.lr = self.optimizer.param_groups[0]['lr']
             self.train_writer.add_scalar(self.model_name + '/lr', self.lr, self.global_step)
             timer['statistics'] += self.split_time()
 
+        # accuracy = np.mean(np.array(true) == np.array(scores))
+        # self.val_writer.add_scalar(self.model_name + '/acc', accuracy, self.global_step)
+
+        s1_arr = np.hstack(s1_list)
+        s2_arr = np.hstack(s2_list)
         # statistics of time consumption and loss
         proportion = {
             k: '{:02d}%'.format(int(round(v * 100 / sum(timer.values()))))
@@ -309,17 +298,12 @@ class Processor:
             torch.save(state_dict, os.path.join(self.work_dir, 'epoch',  'epoch-' + str(epoch+1) + '.pt'))
 
     def eval(self, epoch, save_score=False, loader_name=['test'], wrong_file=None, result_file=None):
-        if wrong_file is not None:
-            f_w = open(wrong_file, 'w')
-        if result_file is not None:
-            f_r = open(result_file, 'w')
         self.print_log('Eval epoch: {}'.format(epoch + 1))
         for ln in loader_name:
-            loss_value, loss_value2 = [], []
-            score_dict, score_dictr, emb_all = {}, {}, {}
+            loss_value = []
+            score_dict = {}
             causal_matrix = {}
 
-            step = 0
             try:
                 process = tqdm(self.data_loader[ln], ncols=50)
             except KeyboardInterrupt:
@@ -328,53 +312,28 @@ class Processor:
             process.close()
 
             for batch_idx, (data, edges, label, index) in enumerate(process):
-                x_node, edge, label = self.converse2tensor(data, edges, label)
+                x_node, edge_index, edge_attr, batch, pos, label = self.converse2tensor(data, edges, label)
 
-                (causal_x, causal_edge), (conf_x, conf_edge), node_score \
-                    = self.causal_assign(x_node, edge)
-                causal_rep = self.model.get_graph_rep(x=causal_x, edge=causal_edge)
-                causal_out = self.model.get_causal_pred(causal_rep)
-                conf_rep = self.model.get_graph_rep(x=conf_x, edge=conf_edge).detach()
-                conf_out = self.model.get_conf_pred(conf_rep)
+                output, w1, w2, s1, s2 = self.model(x_node, edge_index, batch.view(-1), edge_attr, pos)
 
-                causal_loss = self.CELoss(causal_out, label)
-                loss_value.append(causal_loss.item())
-                conf_loss = self.CELoss(conf_out, label)
-                loss_value2.append(conf_loss.item())
+                loss = F.nll_loss(output, label)
+                loss_value.append(loss.item())
                 sub_list = self.data_loader[ln].dataset.sample_name[index] if len(index) > 1 \
                     else [self.data_loader[ln].dataset.sample_name[index]]
-                score_dict.update(dict(zip(sub_list, causal_out.data.cpu().numpy())))
-                score_dictr.update(dict(zip(sub_list, conf_out.data.cpu().numpy())))
-                causal_matrix.update(dict(zip(sub_list, node_score.data.cpu().numpy())))
-
-                _, predict_label = torch.max(causal_out.data, 1)
-                step += 1
-
-                if wrong_file is not None or result_file is not None:
-                    predict = list(predict_label.cpu().numpy())
-                    true = list(label.data.cpu().numpy())
-                    for i, x in enumerate(predict):
-                        if result_file is not None:
-                            f_r.write(str(x) + ',' + str(true[i]) + '\n')
-                        if x != true[i] and wrong_file is not None:
-                            f_w.write(str(index[i]) + ',' + str(x) + ',' + str(true[i]) + '\n')
+                score_dict.update(dict(zip(sub_list, output.data.cpu().numpy())))
 
             loss = np.mean(loss_value)
             accuracy = self.data_loader[ln].dataset.top_k(np.array(list(score_dict.values())), 1)
-            accuracyr = self.data_loader[ln].dataset.top_k(np.array(list(score_dictr.values())), 1)
             if accuracy > self.best_acc and ln == 'test':
                 self.best_acc = accuracy
             self.print_log(f'ln: {ln}, Accuracy: {accuracy}, model: {self.model_name}')
             if ln == 'train_eval':
-                self.val_writer.add_scalar(self.model_name + '/causal_loss', loss, self.global_step)
-                self.val_writer.add_scalar(self.model_name + '/acc_causal', accuracy, self.global_step)
-                self.val_writer.add_scalar(self.model_name + '/acc_conf', accuracyr, self.global_step)
+                self.val_writer.add_scalar(self.model_name + '/loss', loss, self.global_step)
+                self.val_writer.add_scalar(self.model_name + '/acc', accuracy, self.global_step)
             elif ln == 'test':
-                self.lr_scheduler.step(loss)
-                self.lr_scheduler_re.step(np.mean(loss_value2))
-                self.test_writer.add_scalar(self.model_name + '/causal_loss', loss, self.global_step)
-                self.test_writer.add_scalar(self.model_name + '/acc_causal', accuracy, self.global_step)
-                self.test_writer.add_scalar(self.model_name + '/acc_conf', accuracyr, self.global_step)
+                # self.lr_scheduler.step(loss)
+                self.test_writer.add_scalar(self.model_name + '/loss', loss, self.global_step)
+                self.test_writer.add_scalar(self.model_name + '/acc', accuracy, self.global_step)
 
             self.print_log('\tMean {} loss of {} batches: {}.'.format(
                 ln, len(self.data_loader[ln]), np.mean(loss_value)))
@@ -382,26 +341,32 @@ class Processor:
                 self.print_log('\tTop{}: {:.2f}%'.format(
                     k, 100 * self.data_loader[ln].dataset.top_k(np.array(list(score_dict.values())), k)))
 
-            if epoch == (self.arg.num_epoch - 1):
-                with open(os.path.join(self.work_dir, 'epoch', 'final_{}_Fassign.pkl'.format(ln)), 'wb') as f:
-                    pickle.dump(causal_matrix, f)
             if save_score:
                 with open(os.path.join(self.work_dir, 'epoch', 'epoch{}_{}_score.pkl'.format(epoch + 1, ln)), 'wb') as f:
                     pickle.dump(score_dict, f)
 
     def converse2tensor(self, data, edges, label):
+        B, P = data.shape[:2]
+        batch = torch.cat([torch.ones(P) * kk for kk in range(B)], dim=0).long().cuda(self.output_device)
         data = Variable(data.float().cuda(self.output_device), requires_grad=False)
-        all_edge = Variable(edges.float().cuda(self.output_device), requires_grad=False)
+        edges = Variable(edges.float().cuda(self.output_device), requires_grad=False)
         label = Variable(label.long().cuda(self.output_device), requires_grad=False)
-        return data, all_edge, label
+        pos = torch.cat([torch.eye(P)] * B, dim=0).to(self.output_device)
+
+        edge_B_index = torch.LongTensor([[], []]).cuda(self.output_device)
+        edge_B_attr = torch.tensor([]).cuda(self.output_device)
+        for i, edge_square in enumerate(edges):
+            edge_square = edge_square.to_sparse()
+            edge_index, edge_attr = edge_square.indices(), edge_square.values()
+            edge_B_index = torch.cat([edge_B_index, edge_index + i * P], dim=-1)
+            edge_B_attr = torch.cat([edge_B_attr, edge_attr], dim=-1)
+        return data.reshape(B*P, data.shape[-1]), edge_B_index, edge_B_attr, batch, pos, label
 
     def train_mode(self):
         self.model.train()
-        self.causal_assign.train()
 
     def val_mode(self):
         self.model.eval()
-        self.causal_assign.eval()
 
     def print_time(self):
         localtime = time.asctime(time.localtime(time.time()))
@@ -424,6 +389,26 @@ class Processor:
         split_time = time.time() - self.cur_time
         self.record_time()
         return split_time
+
+    # ############################## Define Other Loss Functions ########################################
+    def topk_loss(self, s, ratio):  # eq.9
+        if ratio > 0.5:
+            ratio = 1 - ratio
+        s = s.sort(dim=1).values
+        res = -torch.log(s[:, -int(s.size(1) * ratio):] + self.EPS).mean() - torch.log(
+            1 - s[:, :int(s.size(1) * ratio)] + self.EPS).mean()
+        return res
+
+    def consist_loss(self, s):
+        if len(s) == 0:
+            return 0
+        s = torch.sigmoid(s)
+        W = torch.ones(s.shape[0], s.shape[0])
+        D = torch.eye(s.shape[0]) * torch.sum(W, dim=1)
+        L = D - W
+        L = L.to(self.output_device)
+        res = torch.trace(torch.transpose(s, 0, 1) @ L @ s) / (s.shape[0] * s.shape[0])  # S^T * L * S 矩阵乘法
+        return res
 
 
 if __name__ == '__main__':

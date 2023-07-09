@@ -1,0 +1,18 @@
+setting:
+  binWidth: 25
+  label: 1
+  interpolator: 'sitkBSpline' # This is an enumerated value, here None is not allowed
+  resampledPixelSpacing: # This disables resampling, as it is interpreted as None, to enable it, specify spacing in x, y, z as [x, y , z]
+  weightingNorm: # If no value is specified, it is interpreted as None
+  geometryTolerance: !!float 1e-3  # https://blog.csdn.net/miscut/article/details/125068009
+
+imageType:
+  Original: {} # for dictionaries / mappings, None values are not allowed, '{}' is interpreted as an empty dictionary
+
+featureClass:
+  shape:
+  firstorder: [] # specifying an empty list has the same effect as specifying nothing.
+  glcm:  # Disable SumAverage by specifying all other GLCM features available
+  glrlm: # for lists none values are allowed, in this case, all features are enabled
+  glszm:
+  gldm:  # contains deprecated features, but as no individual features are specified, the deprecated features are not enabled

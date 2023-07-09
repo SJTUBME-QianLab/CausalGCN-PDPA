@@ -37,7 +37,6 @@ class CausalScore(nn.Module):
         #     x = conv(x, edge)  # GraphConv
         #     x = F.relu(bn(x))
         for conv in self.convs1[:-1]:
-            # 一共两组
             x = conv(x, edge)  # GraphConv
             x = F.relu(x)
         node_score = self.convs1[-1](x, edge)
